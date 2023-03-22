@@ -1,28 +1,49 @@
-#SVA System Vertrieb Alexander GmbH
-#Version 1.0
-#Autor: Luca Bartelsen
+# SVA System Vertrieb Alexander GmbH
+# Version 1.1
+# Autor: Luca Bartelsen
 
 import requests
+import configparser
 from requests_ntlm import HttpNtlmAuth
 import json
 
-# server url with port
-server = "isec.lab.de:3121"
-# id of the first ring
-first_ring_id = 1
-# id of the second ring
-second_ring_id = 3
-# ntlm authentification parameters
-auth = HttpNtlmAuth('LAB\\Administrator', 'Pa$$w0rd')
+# global variables
+server = None
+first_ring_id = None
+second_ring_id = None
+auth = None
+family_name = None
+microsoft_family_name = None
+product_versions_server = None
+patch_type = None
 
-# Filter for the Products
-# Product Families
-family_name = ["Chrome", ".Net", "Edge"]
-# Special product versions (Only Microsoft)
-product_versions_server = ["Windows Server 2012", "Windows Server 2012 R2", "Windows Server 2016",
-                           "Windows Server 2019", "Windows Server 2022", "Windows Server Semi-Annual Channel"]
-# Patch Type
-patch_type = ["SecurityPatch", "NonSecurityPatch"]
+
+def load_config():
+    # define variables as global
+    global server, first_ring_id, second_ring_id, auth, family_name, microsoft_family_name, product_versions_server, patch_type
+    # Create a ConfigParser object
+    config = configparser.ConfigParser()
+    # Read the config file
+    config.read('config.ini')
+
+    # Get the server variable from the [Server] section
+    server = config.get('Server', 'server')
+    # Get the first_ring_id variable from the [Server] section
+    first_ring_id = config.getint('Server', 'first_ring_id')
+    # Get the second_ring_id variable from the [Server] section
+    second_ring_id = config.getint('Server', 'second_ring_id')
+
+    # Get the NTLM authentication parameters from the [NTLM Auth] section
+    username = config.get('NTLM Auth', 'username')
+    password = config.get('NTLM Auth', 'password')
+    auth = HttpNtlmAuth(username, password)
+
+    # Get the filter variables from the [Filter] section
+    family_name = eval(config.get('Filter', 'family_name'))
+    microsoft_family_name = eval(config.get('Filter', 'microsoft_family_name'))
+    product_versions_server = eval(
+        config.get('Filter', 'product_versions_server'))
+    patch_type = eval(config.get('Filter', 'patch_type'))
 
 # moving the patches from the first ring on to the second ring
 
@@ -86,9 +107,9 @@ def clear_second_ring():
 # Returns a list with objects where the configured microsoft filter applies
 
 
-def filter_productversions(text, productversions, product='Windows'):
+def filter_productversions(text, productversions, product=['Windows']):
     ret = set()
-    filtered = [item for item in text['families'] if item['name'] == product]
+    filtered = [item for item in text['families'] if item['name'] in product]
     for item in filtered:
         for itempv in item['productVersions']:
             if itempv['name'] in productversions:
@@ -106,9 +127,6 @@ def find_patch(max_id):
         url = f"https://{server}/st/console/api/v1.0/patch/patchmetadata?count=1000&orderBy=bulletinReleaseDate&sortOrder=Desc"
     if max_id != '':
         url = f"https://{server}/st/console/api/v1.0/patch/patchmetadata?count=1000&orderBy=bulletinReleaseDate&sortOrder=Asc&start={max_id}"
-
-    payload = {}
-    headers = {}
 
     response = requests.get(url, auth=auth, verify=False)
 
@@ -143,9 +161,6 @@ def get_ids_of_patches(max_id=''):
     base_url = f"https://{server}/st/console/api/v1.0/patches?bulletinIds="
     base_url += ",".join([f"{bulletinId}" for bulletinId in bulletin_ids])
 
-    payload = {}
-    headers = {}
-
     response = requests.get(base_url, auth=auth, verify=False)
     text = json.loads(response.text)
     ret = set()
@@ -161,13 +176,11 @@ def get_version_uuids_microsoft(product_versions):
     # API Get Product Level Versions
     url = f"https://{server}/st/console/api/v1.0/metadata/vendors?start=1&count=1"
 
-    payload = {}
-    headers = {}
-
     response = requests.get(url, auth=auth, verify=False)
 
     values = json.loads(response.text)['value']
-    uids = [filter_productversions(value, product_versions)
+    # iterating over the list in value, normaly its just one value inside the list
+    uids = [filter_productversions(value, product_versions, microsoft_family_name)
             for value in values]
     return uids
 
@@ -192,9 +205,6 @@ def first_ring_set():
     # API Get Request First Ring
     url = f"https://{server}/st/console/api/v1.0/patch/groups/{first_ring_id}/patches?count=1000"
 
-    payload = {}
-    headers = {}
-
     response = requests.get(url, auth=auth, verify=False)
 
     # Create List with ID's
@@ -211,9 +221,6 @@ def first_ring_set():
 def get_patchuid(patch_id):
     url = f"https://{server}/st/console/api/v1.0/patches?start={patch_id}&count=1"
 
-    payload = {}
-    headers = {}
-
     response = requests.get(url, auth=auth, verify=False)
 
     # looking for the patch uid
@@ -224,6 +231,8 @@ def get_patchuid(patch_id):
 
 
 if __name__ == '__main__':
+    # loads the config from config.ini
+    load_config()
     # gets the patches of the first ring
     first_id = first_ring_set()
     # removes the patches of the second ring
