@@ -6,6 +6,10 @@ import requests
 import configparser
 from requests_ntlm import HttpNtlmAuth
 import json
+import warnings
+
+# Disable the InsecureRequestWarning
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # global variables
 server = None
@@ -82,13 +86,10 @@ def clear_second_ring():
 
     url = f"https://{server}/st/console/api/v1.0/patch/groups/{second_ring_id}/patches?count=1000"
 
-    payload = {}
-    headers = {}
-
     response = requests.get(url, auth=auth, verify=False)
 
     # Create List with ID's that are currently in the patch group
-    py_obj = json.loads(response.text)
+    py_obj = response.json()
     ID_Pilot = []
     for start in py_obj["value"]:
         ID_Pilot.append(start["id"])
@@ -135,7 +136,7 @@ def find_patch(max_id):
     for product_set in get_version_uuids_microsoft(product_versions_server):
         uids = uids.union(product_set)
 
-    basedict = json.loads(response.text)
+    basedict = response.json()
 
     ret = []
 
@@ -162,7 +163,7 @@ def get_ids_of_patches(max_id=''):
     base_url += ",".join([f"{bulletinId}" for bulletinId in bulletin_ids])
 
     response = requests.get(base_url, auth=auth, verify=False)
-    text = json.loads(response.text)
+    text = response.json()
     ret = set()
     for l in [vuln['vulnerabilities'] for vuln in text['value']]:
         for x in l:
@@ -178,7 +179,7 @@ def get_version_uuids_microsoft(product_versions):
 
     response = requests.get(url, auth=auth, verify=False)
 
-    values = json.loads(response.text)['value']
+    values = response.json()['value']
     # iterating over the list in value, normaly its just one value inside the list
     uids = [filter_productversions(value, product_versions, microsoft_family_name)
             for value in values]
@@ -208,7 +209,7 @@ def first_ring_set():
     response = requests.get(url, auth=auth, verify=False)
 
     # Create List with ID's
-    py_obj = json.loads(response.text)
+    py_obj = response.json()
     ID_Pilot = set()
     for start in py_obj["value"]:
         ID_Pilot.add(start["id"])
@@ -224,7 +225,7 @@ def get_patchuid(patch_id):
     response = requests.get(url, auth=auth, verify=False)
 
     # looking for the patch uid
-    py_obj = json.loads(response.text)
+    py_obj = response.json()
     for start in py_obj["value"]:
         ID_Pilot = start["vulnerabilities"][0]["patchIds"]
     return ID_Pilot[0]
