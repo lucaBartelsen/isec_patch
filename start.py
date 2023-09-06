@@ -1,5 +1,5 @@
 # SVA System Vertrieb Alexander GmbH
-# Version 1.1
+# Version 1.2
 # Autor: Luca Bartelsen
 
 import requests
