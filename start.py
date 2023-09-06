@@ -4,15 +4,12 @@
 
 import requests
 import configparser
-from requests_ntlm import HttpNtlmAuth
+from requests_kerberos import HTTPKerberosAuth, OPTIONAL
 import json
 import warnings
 import logging
 import os
 import datetime
-
-# Disable the InsecureRequestWarning
-warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # global variables
 server = None
@@ -23,11 +20,12 @@ family_name = None
 microsoft_family_name = None
 product_versions_server = None
 patch_type = None
+verify = None
 
 
 def load_config():
     # define variables as global
-    global server, first_ring_id, second_ring_id, auth, family_name, microsoft_family_name, product_versions_server, patch_type
+    global server, first_ring_id, second_ring_id, auth, family_name, microsoft_family_name, product_versions_server, patch_type, verify
     # Create a ConfigParser object
     config = configparser.ConfigParser()
     # Read the config file
@@ -40,10 +38,9 @@ def load_config():
     # Get the second_ring_id variable from the [Server] section
     second_ring_id = config.getint('Server', 'second_ring_id')
 
-    # Get the NTLM authentication parameters from the [NTLM Auth] section
-    username = config.get('NTLM Auth', 'username')
-    password = config.get('NTLM Auth', 'password')
-    auth = HttpNtlmAuth(username, password)
+    #auth = HttpNtlmAuth(username, password)
+    auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
+    verify = config.get('Server', 'path_to_cert')
 
     # Get the filter variables from the [Filter] section
     family_name = eval(config.get('Filter', 'family_name'))
@@ -97,7 +94,7 @@ def next_ring(patch_list):
     }
 
     response = requests.request(
-        "POST", url, auth=auth, headers=headers, data=payload, verify=False)
+        "POST", url, auth=auth, headers=headers, data=payload, verify=verify)
     
     logging.info("Sending patches to the next ring")
     logging.info(f"Requested URL: {response.request.url}")
@@ -119,7 +116,7 @@ def clear_first_ring(patch_list):
     }
 
     response = requests.request(
-        "DELETE", url, auth=auth, headers=headers, data=payload, verify=False)
+        "DELETE", url, auth=auth, headers=headers, data=payload, verify=verify)
 
     logging.info("Removing all patches from the first ring")   
     logging.info(f"Requested URL: {response.request.url}")
@@ -135,7 +132,7 @@ def clear_second_ring():
 
     url = f"{server}/st/console/api/v1.0/patch/groups/{second_ring_id}/patches?count=1000"
 
-    response = requests.get(url, auth=auth, verify=False)
+    response = requests.get(url, auth=auth, verify=verify)
 
     logging.info("Getting all patches from the second ring") 
     logging.info(f"Requested URL: {response.request.url}")
@@ -160,7 +157,7 @@ def clear_second_ring():
         }
 
         response = requests.request(
-            "DELETE", url, auth=auth, headers=headers, data=payload, verify=False)
+            "DELETE", url, auth=auth, headers=headers, data=payload, verify=verify)
         
         logging.info("Removing all patches from the second ring") 
         logging.info(f"Requested URL: {response.request.url}")
@@ -195,7 +192,7 @@ def find_patch(max_id):
     if max_id != '':
         url = f"{server}/st/console/api/v1.0/patch/patchmetadata?count=1000&orderBy=bulletinReleaseDate&sortOrder=Asc&start={max_id}"
 
-    response = requests.get(url, auth=auth, verify=False)
+    response = requests.get(url, auth=auth, verify=verify)
 
     logging.info("Requesting all patchmetadata") 
     logging.info(f"Requested URL: {response.request.url}")
@@ -228,29 +225,32 @@ def find_patch(max_id):
 
 
 def get_ids_of_patches(max_id=''):
-
     bulletin_ids = find_patch(max_id)
-
-    # Creating API Url with all Bulleting Ids to get the Patch ID
-    base_url = f"{server}/st/console/api/v1.0/patches?bulletinIds="
-    base_url += ",".join([f"{bulletinId}" for bulletinId in bulletin_ids])
-
-    response = requests.get(base_url, auth=auth, verify=False)
-    text = response.json()
-
-    logging.info("Requesting patch data for all bulletinids") 
-    logging.info(f"Requested URL: {response.request.url}")
-    logging.info(f"Requested methode: {response.request.method}")
-    logging.info(f"Request Body: {response.request.body}")
-    logging.info(f"Final response code: {response.status_code}")
-    logging.debug(f"Response: {response.text}")
+    max_chunk_size = 200  # Maximum number of BulletinIDs to include in each request
 
     ret = set()
-    for l in [vuln['vulnerabilities'] for vuln in text['value']]:
-        for x in l:
-            if x['patchType'] not in patch_type:
-                continue
-            ret.add(x['id'])
+
+    for i in range(0, len(bulletin_ids), max_chunk_size):
+        chunk = bulletin_ids[i:i + max_chunk_size]
+        base_url = f"{server}/st/console/api/v1.0/patches?bulletinIds="
+        base_url += ",".join([f"{bulletinId}" for bulletinId in chunk])
+
+        response = requests.get(base_url, auth=auth, verify=verify)
+        text = response.json()
+
+        logging.info("Requesting patch data for bulletin IDs")
+        logging.info(f"Requested URL: {response.request.url}")
+        logging.info(f"Requested method: {response.request.method}")
+        logging.info(f"Request Body: {response.request.body}")
+        logging.info(f"Final response code: {response.status_code}")
+        logging.debug(f"Response: {response.text}")
+
+        for vuln in text.get('value', []):
+            for x in vuln.get('vulnerabilities', []):
+                if x['patchType'] not in patch_type:
+                    continue
+                ret.add(x['id'])
+                
     return ret
 
 # Looks up for the uids of the microsoft products
@@ -260,7 +260,7 @@ def get_version_uuids_microsoft(product_versions):
     # API Get Product Level Versions
     url = f"{server}/st/console/api/v1.0/metadata/vendors?start=1&count=1"
 
-    response = requests.get(url, auth=auth, verify=False)
+    response = requests.get(url, auth=auth, verify=verify)
 
     logging.info("Requesting all microsoft vendor data") 
     logging.info(f"Requested URL: {response.request.url}")
@@ -287,7 +287,7 @@ def start_ring(id_pilot):
     }
 
     response = requests.request(
-        "POST", url, auth=auth, headers=headers, data=payload, verify=False)
+        "POST", url, auth=auth, headers=headers, data=payload, verify=verify)
     
     logging.info("Adding the filtered patches to the first ring")  
     logging.info(f"Requested URL: {response.request.url}")
@@ -303,7 +303,7 @@ def first_ring_set():
     # API Get Request First Ring
     url = f"{server}/st/console/api/v1.0/patch/groups/{first_ring_id}/patches?count=1000"
 
-    response = requests.get(url, auth=auth, verify=False)
+    response = requests.get(url, auth=auth, verify=verify)
 
     logging.info("Requesting all patches from the first ring") 
     logging.info(f"Requested URL: {response.request.url}")
@@ -326,7 +326,7 @@ def first_ring_set():
 def get_patchuid(patch_id):
     url = f"{server}/st/console/api/v1.0/patches?start={patch_id}&count=1"
 
-    response = requests.get(url, auth=auth, verify=False)
+    response = requests.get(url, auth=auth, verify=verify)
 
     logging.info("Requesting a patchuid while giving a normal patch id") 
     logging.info(f"Requested URL: {response.request.url}")
